@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Academia Job Alert</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="logo">⚡</div>
+    <div>
+      <div class="app-name">Academia Job Alert</div>
+      <div class="status-line" id="status-line">Loading...</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="enabled-toggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="section">
+    <div class="section-title">POLLING SPEED</div>
+    <div class="interval-buttons">
+      <button class="interval-btn" data-seconds="3">3s</button>
+      <button class="interval-btn" data-seconds="5">5s</button>
+      <button class="interval-btn" data-seconds="10">10s</button>
+      <button class="interval-btn" data-seconds="30">30s</button>
+    </div>
+    <div class="hint">Lower = faster detection, but more requests to the site. 3s is the floor — going faster stops helping and starts looking like abuse.</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">ALERTS</div>
+    <div class="row">
+      <span>Sound Alert</span>
+      <label class="toggle-sm">
+        <input type="checkbox" id="sound-toggle">
+        <span class="slider-sm"></span>
+      </label>
+    </div>
+    <div class="row">
+      <span>Page Overlay</span>
+      <label class="toggle-sm">
+        <input type="checkbox" id="overlay-toggle">
+        <span class="slider-sm"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">STATUS</div>
+    <div class="stat-row">
+      <span>Last Check</span>
+      <span id="last-check">Never</span>
+    </div>
+    <div class="stat-row">
+      <span>Jobs Detected</span>
+      <span id="job-count">0</span>
+    </div>
+    <div class="stat-row">
+      <span>Claims Opened</span>
+      <span id="claim-count">0</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">QUICK CLAIM</div>
+    <div class="hint">Press <b>Enter</b> while an alert is showing, or <b>Alt+Shift+C</b> anywhere on the tab, to claim instantly.</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="check-now-btn">⚡ Check Now</button>
+    <button class="btn-secondary" id="clear-cache-btn">Clear Cache</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
