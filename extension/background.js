@@ -28,33 +28,12 @@ chrome.runtime.onInstalled.addListener(async () => {
   const existing = await chrome.storage.local.get(Object.keys(defaults));
   const merged = { ...defaults, ...existing };
   await chrome.storage.local.set(merged);
-  if (merged.enabled) await startEngine(merged.intervalSeconds);
 });
 
-// ── On browser start: restart the engine ────────────────────
+// ── On browser start: leave the extension idle until the page itself
+// exposes a new job. This is quieter and faster than background polling. ─
 chrome.runtime.onStartup.addListener(async () => {
-  const { enabled, intervalSeconds } = await chrome.storage.local.get(['enabled', 'intervalSeconds']);
-  if (enabled) await startEngine(intervalSeconds || 5);
-});
-
-async function startEngine(intervalSeconds) {
-  await ensureOffscreen();
-  chrome.runtime.sendMessage({ type: 'START_POLLING', intervalSeconds }).catch(() => {});
-  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1 });
-}
-
-function stopEngine() {
-  chrome.alarms.clear(HEARTBEAT_ALARM);
-  chrome.runtime.sendMessage({ type: 'STOP_POLLING' }).catch(() => {});
-}
-
-// ── Heartbeat: recover if the offscreen document died ───────
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== HEARTBEAT_ALARM) return;
-  const { enabled, intervalSeconds } = await chrome.storage.local.get(['enabled', 'intervalSeconds']);
-  if (!enabled) return;
-  await ensureOffscreen();
-  chrome.runtime.sendMessage({ type: 'START_POLLING', intervalSeconds: intervalSeconds || 5 }).catch(() => {});
+  await chrome.storage.local.get(['enabled']);
 });
 
 // ── Ensure offscreen document exists ────────────────────────
@@ -225,25 +204,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'CHECK_NOW') {
-    ensureOffscreen().then(() => {
-      chrome.runtime.sendMessage({ type: 'POLL_NOW' }).catch(() => {});
+    chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+      const tab = tabs[0];
+      if (tab?.id) {
+        chrome.tabs.sendMessage(tab.id, { type: 'SCAN_NOW' }).catch(() => {});
+      }
       sendResponse({ success: true });
-    });
+    }).catch(() => sendResponse({ success: false }));
     return true;
   }
   if (msg.type === 'UPDATE_INTERVAL') {
-    chrome.runtime.sendMessage({ type: 'START_POLLING', intervalSeconds: msg.intervalSeconds }).catch(() => {});
+    chrome.storage.local.set({ intervalSeconds: msg.intervalSeconds || 5 }).catch(() => {});
     sendResponse({ success: true });
+    return false;
   }
   if (msg.type === 'TOGGLE_ENABLED') {
-    if (msg.enabled) {
-      chrome.storage.local.get('intervalSeconds', ({ intervalSeconds }) => {
-        startEngine(intervalSeconds || 5);
-      });
-    } else {
-      stopEngine();
-      chrome.action.setBadgeText({ text: '' });
-    }
+    chrome.storage.local.set({ enabled: !!msg.enabled }).catch(() => {});
+    chrome.action.setBadgeText({ text: '' });
     sendResponse({ success: true });
+    return false;
   }
 });

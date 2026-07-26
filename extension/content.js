@@ -6,6 +6,9 @@
 
 let activeOverlay = null;
 let countdownInterval = null;
+let scanTimer = null;
+let pageObserver = null;
+let seenJobIds = new Set();
 
 // ── Listen for new job alerts / quick-claim shortcut from background.js ──
 chrome.runtime.onMessage.addListener((msg) => {
@@ -16,6 +19,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     const btn = document.getElementById('aja-claim-btn');
     if (btn) btn.click();
   }
+  if (msg.type === 'SCAN_NOW') {
+    schedulePageScan({ delayMs: 40, source: 'manual' });
+  }
 });
 
 // ── Best-effort: on the page the claim link opens, look for a flash
@@ -23,6 +29,134 @@ chrome.runtime.onMessage.addListener((msg) => {
 // best-effort — it depends on the site rendering a recognizable
 // success/failure banner, which we can't verify without the live site. ──
 detectClaimResult();
+initializePageWatcher();
+
+function initializePageWatcher() {
+  if (!document.body) return;
+
+  if (!pageObserver) {
+    pageObserver = new MutationObserver(() => schedulePageScan({ delayMs: 140, source: 'mutation' }));
+    pageObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      schedulePageScan({ delayMs: 120, source: 'visibility' });
+    }
+  });
+
+  window.addEventListener('focus', () => schedulePageScan({ delayMs: 120, source: 'focus' }));
+  window.addEventListener('pageshow', () => schedulePageScan({ delayMs: 120, source: 'pageshow' }));
+
+  schedulePageScan({ delayMs: 80, source: 'startup' });
+}
+
+function schedulePageScan({ delayMs = 120, source = 'scan' } = {}) {
+  if (scanTimer) clearTimeout(scanTimer);
+  scanTimer = setTimeout(() => scanPageForJobs({ source }), delayMs);
+}
+
+function scanPageForJobs({ source = 'scan' } = {}) {
+  const jobs = extractJobsFromDOM(document);
+  if (!jobs.length) return;
+
+  const newJobs = jobs.filter(job => !seenJobIds.has(job.id));
+  if (!newJobs.length) return;
+
+  newJobs.forEach(job => seenJobIds.add(job.id));
+  chrome.runtime.sendMessage({ type: 'JOBS_RESULT', jobs: newJobs }).catch(() => {});
+}
+
+function extractJobsFromDOM(doc) {
+  const scope = doc.querySelector(
+    '#available-orders, .available-orders, [id*="available" i], [class*="available-order" i], [class*="order-list" i], [class*="orders-list" i]'
+  ) || doc;
+
+  const jobs = [];
+  const seenIds = new Set();
+
+  const pushJob = (id, title, deadline, price, url) => {
+    if (!id || seenIds.has(id)) return;
+    if (!title || title.trim().length < 2) return;
+    seenIds.add(id);
+    jobs.push({ id: String(id), title: title.trim(), deadline: (deadline || '').trim(), price: (price || '').trim(), url });
+  };
+
+  const isNoise = (el) => !!el.closest(
+    'nav, header, footer, .navbar, .menu, .sidebar, [class*="footer" i], [class*="header" i]'
+  );
+
+  scope.querySelectorAll('[data-id], [data-order-id], [data-key]').forEach((el) => {
+    if (isNoise(el)) return;
+    const rawId = el.dataset.id || el.dataset.orderId || el.dataset.key;
+    if (!rawId) return;
+    const title = el.querySelector('.topic, .title, .subject, h4, h3, h5, td:nth-child(2)')?.textContent?.trim()
+      || el.textContent.trim().substring(0, 80);
+    const deadline = el.querySelector('.deadline, .due, [class*="deadline"], [class*="due"]')?.textContent?.trim() || '';
+    const price = el.querySelector('.price, .budget, .pay, [class*="price"], [class*="pay"]')?.textContent?.trim() || '';
+    const link = el.querySelector('a')?.getAttribute('href') || '';
+    const url = resolveUrl(link);
+    const id = extractOrderIdFromUrl(url) || rawId;
+    pushJob(id, title, deadline, price, url);
+  });
+
+  if (jobs.length > 0) return jobs;
+
+  scope.querySelectorAll('table tbody tr').forEach((row) => {
+    if (isNoise(row)) return;
+    const cells = row.querySelectorAll('td');
+    if (cells.length < 2) return;
+    const title = cells[1]?.textContent?.trim() || cells[0]?.textContent?.trim();
+    const deadline = cells[2]?.textContent?.trim() || '';
+    const price = cells[3]?.textContent?.trim() || cells[cells.length - 1]?.textContent?.trim() || '';
+    const link = row.querySelector('a')?.getAttribute('href') || '';
+    const url = resolveUrl(link);
+    const id = extractOrderIdFromUrl(url) || row.id || row.dataset.id || hashString(`${title}|${price}`);
+    pushJob(id, title, deadline, price, url);
+  });
+
+  if (jobs.length > 0) return jobs;
+
+  scope.querySelectorAll('.order, .job, .task, div[class*="order" i], div[class*="job" i]').forEach((card) => {
+    if (isNoise(card)) return;
+    const title = card.querySelector('h3,h4,h5,.title,.topic,.subject')?.textContent?.trim()
+      || card.textContent.trim().substring(0, 80);
+    const link = card.querySelector('a')?.getAttribute('href') || '';
+    const url = resolveUrl(link);
+    const id = extractOrderIdFromUrl(url) || card.id || card.dataset.id || hashString(title);
+    pushJob(id, title, '', '', url);
+  });
+
+  return jobs;
+}
+
+function extractOrderIdFromUrl(url) {
+  if (!url) return null;
+  const patterns = [
+    /[?&](?:order_?id|id|oid)=(\d+)/i,
+    /\/order\/(\d+)/i,
+    /\/(\d{4,})(?:[/?]|$)/
+  ];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return 'h' + (h >>> 0).toString(36);
+}
+
+function resolveUrl(link) {
+  if (!link) return 'https://writers.academia-research.com/index.php?r=order/available';
+  if (link.startsWith('http')) return link;
+  return 'https://writers.academia-research.com/' + link.replace(/^\//, '');
+}
 
 function detectClaimResult() {
   let pending;
