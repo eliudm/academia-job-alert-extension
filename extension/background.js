@@ -30,10 +30,13 @@ chrome.runtime.onInstalled.addListener(async () => {
   await chrome.storage.local.set(merged);
 });
 
-// ── On browser start: leave the extension idle until the page itself
-// exposes a new job. This is quieter and faster than background polling. ─
+// ── On browser start: ensure the offscreen polling engine is running.
 chrome.runtime.onStartup.addListener(async () => {
-  await chrome.storage.local.get(['enabled']);
+  await startPollingIfEnabled();
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await startPollingIfEnabled();
 });
 
 // ── Ensure offscreen document exists ────────────────────────
@@ -47,6 +50,17 @@ async function ensureOffscreen() {
     reasons: ['DOM_PARSER'],
     justification: 'Poll Academia job listings, parse HTML, and play alert sounds'
   });
+}
+
+async function startPollingIfEnabled() {
+  const { enabled, intervalSeconds } = await chrome.storage.local.get(['enabled', 'intervalSeconds']);
+  if (!enabled) return;
+  await ensureOffscreen();
+  chrome.runtime.sendMessage({ type: 'START_POLLING', intervalSeconds: intervalSeconds || 10 }).catch(() => {});
+}
+
+async function stopPolling() {
+  chrome.runtime.sendMessage({ type: 'STOP_POLLING' }).catch(() => {});
 }
 
 // ── Process a batch of parsed jobs from offscreen.js ────────
@@ -169,7 +183,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 // ── Messages from offscreen.js, content.js, and popup.js ─────
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
 
   if (msg.type === 'JOBS_RESULT') {
     processJobsResult(msg.jobs || []);
@@ -204,6 +218,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'CHECK_NOW') {
+    await startPollingIfEnabled();
+    await new Promise(resolve => setTimeout(resolve, 400));
+    chrome.runtime.sendMessage({ type: 'POLL_NOW' }).catch(() => {});
     chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
       const tab = tabs[0];
       if (tab?.id) {
@@ -215,12 +232,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'UPDATE_INTERVAL') {
     chrome.storage.local.set({ intervalSeconds: msg.intervalSeconds || 5 }).catch(() => {});
+    await startPollingIfEnabled();
     sendResponse({ success: true });
     return false;
   }
   if (msg.type === 'TOGGLE_ENABLED') {
     chrome.storage.local.set({ enabled: !!msg.enabled }).catch(() => {});
     chrome.action.setBadgeText({ text: '' });
+    if (msg.enabled) {
+      await startPollingIfEnabled();
+    } else {
+      stopPolling();
+    }
     sendResponse({ success: true });
     return false;
   }

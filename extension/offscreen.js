@@ -200,3 +200,18 @@ function resolveUrl(link) {
   if (link.startsWith('http')) return link;
   return BASE_URL + '/' + link.replace(/^\//, '');
 }
+
+async function startup() {
+  try {
+    const data = await chrome.storage.local.get(['enabled', 'intervalSeconds']);
+    const enabled = data.enabled !== false;
+    currentIntervalSeconds = data.intervalSeconds || 10;
+    if (enabled) {
+      startPolling();
+    }
+  } catch (e) {
+    console.warn('Offscreen startup failed:', e);
+  }
+}
+
+startup();

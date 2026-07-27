@@ -58,13 +58,14 @@ function schedulePageScan({ delayMs = 120, source = 'scan' } = {}) {
 
 function scanPageForJobs({ source = 'scan' } = {}) {
   const jobs = extractJobsFromDOM(document);
-  if (!jobs.length) return;
+  if (!jobs.length) {
+    chrome.runtime.sendMessage({ type: 'JOBS_RESULT', jobs: [] }).catch(() => {});
+    return;
+  }
 
   const newJobs = jobs.filter(job => !seenJobIds.has(job.id));
-  if (!newJobs.length) return;
-
   newJobs.forEach(job => seenJobIds.add(job.id));
-  chrome.runtime.sendMessage({ type: 'JOBS_RESULT', jobs: newJobs }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'JOBS_RESULT', jobs }).catch(() => {});
 }
 
 function extractJobsFromDOM(doc) {
