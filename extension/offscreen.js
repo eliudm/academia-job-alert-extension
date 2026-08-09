@@ -119,8 +119,37 @@ function extractJobsFromHTML(html) {
   };
 
   const isNoise = (el) => !!el.closest(
-    'nav, header, footer, .navbar, .menu, .sidebar, [class*="footer" i], [class*="header" i]'
+    'nav, header, footer, .navbar, .menu, .sidebar, [class*="footer" i], [class*="header" i], .pagination, .dropdown, .modal'
   );
+
+  const looksLikeOrderLink = (url) => {
+    if (!url) return false;
+    const normalized = url.toLowerCase();
+    return normalized.includes('/order') || normalized.includes('order') || normalized.includes('/job') || normalized.includes('job') || normalized.includes('available') || normalized.includes('claim');
+  };
+
+  const extractTitleFromContainer = (container, fallbackLink) => {
+    const heading = container.querySelector('h1, h2, h3, h4, h5, .title, .topic, .subject, .name, .order-title, .job-title');
+    const headingText = heading?.textContent?.trim();
+    if (headingText) return headingText;
+    const fallbackText = (fallbackLink?.textContent || container.textContent || '').trim();
+    return fallbackText.replace(/\s+/g, ' ').substring(0, 140);
+  };
+
+  // Strategy 0: generic order/job links inside list rows/cards. This catches
+  // layouts where the site uses plain links or generic wrappers instead of
+  // explicit order/job classes.
+  scope.querySelectorAll('a[href], button[data-href]').forEach((link) => {
+    const href = link.getAttribute('href') || link.getAttribute('data-href') || '';
+    if (!looksLikeOrderLink(href)) return;
+    const container = link.closest('li, tr, td, article, section, div, span');
+    if (!container || isNoise(container)) return;
+    const title = extractTitleFromContainer(container, link);
+    const url = resolveUrl(href);
+    const id = extractOrderIdFromUrl(url) || link.id || link.dataset.id || hashString(`${title}|${url}`);
+    pushJob(id, title, '', '', url);
+  });
+  if (jobs.length > 0) return jobs;
 
   // Strategy 1: elements with data-id / data-order-id / data-key
   scope.querySelectorAll('[data-id], [data-order-id], [data-key]').forEach(el => {
