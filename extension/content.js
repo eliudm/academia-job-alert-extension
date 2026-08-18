@@ -188,7 +188,7 @@ function hashString(str) {
 }
 
 function resolveUrl(link) {
-  if (!link) return 'https://writers.academia-research.com/index.php?r=order/available';
+  if (!link) return 'https://writers.academia-research.com/index.php?r=order/index';
   if (link.startsWith('http')) return link;
   return 'https://writers.academia-research.com/' + link.replace(/^\//, '');
 }
@@ -270,7 +270,7 @@ function showJobAlert(jobs) {
         <a href="${firstJob.url}" target="_blank" class="aja-claim-btn" id="aja-claim-btn">
           ⚡ CLAIM NOW <span class="aja-kbd">Enter</span>
         </a>
-        ${jobs.length > 1 ? `<a href="https://writers.academia-research.com/index.php?r=order/available" target="_blank" class="aja-all-btn">View All (${jobs.length})</a>` : ''}
+        ${jobs.length > 1 ? `<a href="https://writers.academia-research.com/index.php?r=order/index" target="_blank" class="aja-all-btn">View All (${jobs.length})</a>` : ''}
       </div>
     </div>
   `;

@@ -6,7 +6,7 @@
 // ============================================================
 
 const HEARTBEAT_ALARM = 'academia_heartbeat';
-const JOBS_URL = 'https://writers.academia-research.com/index.php?r=order/available';
+const JOBS_URL = 'https://writers.academia-research.com/index.php?r=order/index';
 
 // How many consecutive empty polls before we warn the user that
 // detection may be silently broken (logged out / layout changed).

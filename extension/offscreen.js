@@ -11,7 +11,7 @@
 // ============================================================
 
 const BASE_URL = 'https://writers.academia-research.com';
-const JOBS_URL = 'https://writers.academia-research.com/index.php?r=order/available';
+const JOBS_URL = 'https://writers.academia-research.com/index.php?r=order/index';
 
 let pollTimer = null;
 let currentIntervalSeconds = 10;
