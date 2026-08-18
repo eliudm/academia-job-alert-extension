@@ -122,10 +122,14 @@ function extractJobsFromHTML(html) {
     'nav, header, footer, .navbar, .menu, .sidebar, [class*="footer" i], [class*="header" i], .pagination, .dropdown, .modal'
   );
 
+  // Requires an actual order id in the URL (not just the word "order"
+  // anywhere) — otherwise this matches generic page links like a
+  // breadcrumb or "back to available orders" link, which produces one
+  // fake, stable "job" that short-circuits real detection forever.
   const looksLikeOrderLink = (url) => {
     if (!url) return false;
     const normalized = url.toLowerCase();
-    return normalized.includes('/order') || normalized.includes('order') || normalized.includes('/job') || normalized.includes('job') || normalized.includes('available') || normalized.includes('claim');
+    return /\/order\/\d+/.test(normalized) || /[?&](?:order_?id|oid)=\d+/.test(normalized);
   };
 
   const extractTitleFromContainer = (container, fallbackLink) => {
@@ -135,21 +139,6 @@ function extractJobsFromHTML(html) {
     const fallbackText = (fallbackLink?.textContent || container.textContent || '').trim();
     return fallbackText.replace(/\s+/g, ' ').substring(0, 140);
   };
-
-  // Strategy 0: generic order/job links inside list rows/cards. This catches
-  // layouts where the site uses plain links or generic wrappers instead of
-  // explicit order/job classes.
-  scope.querySelectorAll('a[href], button[data-href]').forEach((link) => {
-    const href = link.getAttribute('href') || link.getAttribute('data-href') || '';
-    if (!looksLikeOrderLink(href)) return;
-    const container = link.closest('li, tr, td, article, section, div, span');
-    if (!container || isNoise(container)) return;
-    const title = extractTitleFromContainer(container, link);
-    const url = resolveUrl(href);
-    const id = extractOrderIdFromUrl(url) || link.id || link.dataset.id || hashString(`${title}|${url}`);
-    pushJob(id, title, '', '', url);
-  });
-  if (jobs.length > 0) return jobs;
 
   // Strategy 1: elements with data-id / data-order-id / data-key
   scope.querySelectorAll('[data-id], [data-order-id], [data-key]').forEach(el => {
@@ -196,6 +185,22 @@ function extractJobsFromHTML(html) {
     const link = card.querySelector('a')?.getAttribute('href') || '';
     const url  = resolveUrl(link);
     const id = extractOrderIdFromUrl(url) || card.id || card.dataset.id || hashString(title);
+    pushJob(id, title, '', '', url);
+  });
+
+  if (jobs.length > 0) return jobs;
+
+  // Strategy 4 (last resort): generic order links inside list rows/cards.
+  // This catches layouts where the site uses plain links instead of
+  // explicit order/job classes or data attributes.
+  scope.querySelectorAll('a[href], button[data-href]').forEach((link) => {
+    const href = link.getAttribute('href') || link.getAttribute('data-href') || '';
+    if (!looksLikeOrderLink(href)) return;
+    const container = link.closest('li, tr, td, article, section, div, span');
+    if (!container || isNoise(container)) return;
+    const title = extractTitleFromContainer(container, link);
+    const url = resolveUrl(href);
+    const id = extractOrderIdFromUrl(url) || link.id || link.dataset.id || hashString(`${title}|${url}`);
     pushJob(id, title, '', '', url);
   });
 
