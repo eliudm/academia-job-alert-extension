@@ -75,7 +75,7 @@ async function pollOnce() {
       }
     });
 
-    console.log(`[AJA] response status=${response.status} ok=${response.ok}`);
+    console.log(`[AJA] response status=${response.status} ok=${response.ok} finalUrl=${response.url}`);
 
     if (response.status === 401 || response.status === 403) {
       console.warn('[AJA] treated as logged out (401/403)');
@@ -87,14 +87,23 @@ async function pollOnce() {
       return;
     }
 
-    const html = await response.text();
-    console.log(`[AJA] fetched ${html.length} chars of HTML`);
-
-    if (html.includes('account/login') || html.includes('I forgot my password')) {
-      console.warn('[AJA] treated as logged out (login markers found in HTML)');
+    // fetch() follows redirects automatically — if the session was invalid,
+    // Yii-style apps 302 the request to the login controller, and
+    // response.url reflects that final landing URL. This is a much more
+    // reliable "are we actually logged out" signal than searching the page
+    // text for login-related words: many app layouts embed a hidden
+    // "session expired, log back in" modal on every page (logged in or
+    // not), which made the old text-based check misfire as logged-out on
+    // the real, logged-in orders page and skip extraction entirely.
+    const redirectedToLogin = /[?&]r=(account|site)%2F(login|auth)|[?&]r=(account|site)\/(login|auth)/i.test(response.url);
+    if (redirectedToLogin) {
+      console.warn(`[AJA] treated as logged out (redirected to ${response.url})`);
       chrome.runtime.sendMessage({ type: 'LOGIN_REQUIRED' }).catch(() => {});
       return;
     }
+
+    const html = await response.text();
+    console.log(`[AJA] fetched ${html.length} chars of HTML`);
 
     const jobs = extractJobsFromHTML(html);
     console.log(`[AJA] extracted ${jobs.length} job(s)`, jobs);
