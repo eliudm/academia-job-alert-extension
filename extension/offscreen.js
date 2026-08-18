@@ -66,6 +66,7 @@ function stopPolling() {
 // ── Core: fetch + parse, then hand results to background.js ───
 async function pollOnce() {
   try {
+    console.log(`[AJA] polling ${JOBS_URL}`);
     const response = await fetch(JOBS_URL, {
       credentials: 'include',
       headers: {
@@ -74,7 +75,10 @@ async function pollOnce() {
       }
     });
 
+    console.log(`[AJA] response status=${response.status} ok=${response.ok}`);
+
     if (response.status === 401 || response.status === 403) {
+      console.warn('[AJA] treated as logged out (401/403)');
       chrome.runtime.sendMessage({ type: 'LOGIN_REQUIRED' }).catch(() => {});
       return;
     }
@@ -84,15 +88,19 @@ async function pollOnce() {
     }
 
     const html = await response.text();
+    console.log(`[AJA] fetched ${html.length} chars of HTML`);
 
     if (html.includes('account/login') || html.includes('I forgot my password')) {
+      console.warn('[AJA] treated as logged out (login markers found in HTML)');
       chrome.runtime.sendMessage({ type: 'LOGIN_REQUIRED' }).catch(() => {});
       return;
     }
 
     const jobs = extractJobsFromHTML(html);
+    console.log(`[AJA] extracted ${jobs.length} job(s)`, jobs);
     chrome.runtime.sendMessage({ type: 'JOBS_RESULT', jobs }).catch(() => {});
   } catch (err) {
+    console.error('[AJA] poll failed:', err);
     chrome.runtime.sendMessage({ type: 'FETCH_ERROR', error: err.message }).catch(() => {});
   }
 }
@@ -104,9 +112,13 @@ function extractJobsFromHTML(html) {
 
   // Prefer a scoped container when one exists so we don't pick up
   // unrelated data-id/data-key/li elements from nav bars, ads, etc.
-  const scope = doc.querySelector(
+  const scopeMatch = doc.querySelector(
     '#available-orders, .available-orders, [id*="available" i], [class*="available-order" i], [class*="order-list" i], [class*="orders-list" i]'
-  ) || doc;
+  );
+  const scope = scopeMatch || doc;
+  console.log(scopeMatch
+    ? `[AJA] scoped to <${scopeMatch.tagName.toLowerCase()} id="${scopeMatch.id}" class="${scopeMatch.className}">`
+    : '[AJA] no scoped container matched — searching whole document');
 
   const jobs = [];
   const seenIds = new Set();
@@ -141,7 +153,8 @@ function extractJobsFromHTML(html) {
   };
 
   // Strategy 1: elements with data-id / data-order-id / data-key
-  scope.querySelectorAll('[data-id], [data-order-id], [data-key]').forEach(el => {
+  const s1Candidates = scope.querySelectorAll('[data-id], [data-order-id], [data-key]');
+  s1Candidates.forEach(el => {
     if (isNoise(el)) return;
     const rawId = el.dataset.id || el.dataset.orderId || el.dataset.key;
     if (!rawId) return;
@@ -156,10 +169,12 @@ function extractJobsFromHTML(html) {
     const id = extractOrderIdFromUrl(url) || rawId;
     pushJob(id, title, deadline, price, url);
   });
+  console.log(`[AJA] strategy 1 (data-id/data-order-id/data-key): ${s1Candidates.length} candidate(s), ${jobs.length} accepted`);
   if (jobs.length > 0) return jobs;
 
   // Strategy 2: table rows
-  scope.querySelectorAll('table tbody tr').forEach((row) => {
+  const s2Candidates = scope.querySelectorAll('table tbody tr');
+  s2Candidates.forEach((row) => {
     if (isNoise(row)) return;
     const cells = row.querySelectorAll('td');
     if (cells.length < 2) return;
@@ -174,11 +189,13 @@ function extractJobsFromHTML(html) {
     const id = extractOrderIdFromUrl(url) || row.id || row.dataset.id || hashString(`${title}|${price}`);
     pushJob(id, title, deadline, price, url);
   });
+  console.log(`[AJA] strategy 2 (table rows): ${s2Candidates.length} candidate(s), ${jobs.length} accepted`);
   if (jobs.length > 0) return jobs;
 
   // Strategy 3: card/list elements (dropped the old `li[class]` selector —
   // it matched any styled list item anywhere on the page, including nav menus)
-  scope.querySelectorAll('.order, .job, .task, div[class*="order" i], div[class*="job" i]').forEach((card) => {
+  const s3Candidates = scope.querySelectorAll('.order, .job, .task, div[class*="order" i], div[class*="job" i]');
+  s3Candidates.forEach((card) => {
     if (isNoise(card)) return;
     const title = card.querySelector('h3,h4,h5,.title,.topic,.subject')?.textContent?.trim()
                 || card.textContent.trim().substring(0, 80);
@@ -187,13 +204,14 @@ function extractJobsFromHTML(html) {
     const id = extractOrderIdFromUrl(url) || card.id || card.dataset.id || hashString(title);
     pushJob(id, title, '', '', url);
   });
-
+  console.log(`[AJA] strategy 3 (.order/.job/.task cards): ${s3Candidates.length} candidate(s), ${jobs.length} accepted`);
   if (jobs.length > 0) return jobs;
 
   // Strategy 4 (last resort): generic order links inside list rows/cards.
   // This catches layouts where the site uses plain links instead of
   // explicit order/job classes or data attributes.
-  scope.querySelectorAll('a[href], button[data-href]').forEach((link) => {
+  const s4Candidates = scope.querySelectorAll('a[href], button[data-href]');
+  s4Candidates.forEach((link) => {
     const href = link.getAttribute('href') || link.getAttribute('data-href') || '';
     if (!looksLikeOrderLink(href)) return;
     const container = link.closest('li, tr, td, article, section, div, span');
@@ -203,6 +221,12 @@ function extractJobsFromHTML(html) {
     const id = extractOrderIdFromUrl(url) || link.id || link.dataset.id || hashString(`${title}|${url}`);
     pushJob(id, title, '', '', url);
   });
+  console.log(`[AJA] strategy 4 (generic order/job links): ${s4Candidates.length} total link(s) scanned, ${jobs.length} accepted`);
+
+  if (jobs.length === 0) {
+    console.warn('[AJA] no strategy matched anything — dumping first 500 chars of scope HTML for inspection:');
+    console.warn(scope.innerHTML ? scope.innerHTML.substring(0, 500) : '(scope has no innerHTML — was the whole document)');
+  }
 
   return jobs;
 }

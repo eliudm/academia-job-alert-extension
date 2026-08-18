@@ -57,7 +57,9 @@ function schedulePageScan({ delayMs = 120, source = 'scan' } = {}) {
 }
 
 function scanPageForJobs({ source = 'scan' } = {}) {
+  console.log(`[AJA] content-script scan (source=${source}) on ${location.href}`);
   const jobs = extractJobsFromDOM(document);
+  console.log(`[AJA] content-script extracted ${jobs.length} job(s)`, jobs);
   if (!jobs.length) {
     chrome.runtime.sendMessage({ type: 'JOBS_RESULT', jobs: [] }).catch(() => {});
     return;
@@ -69,9 +71,13 @@ function scanPageForJobs({ source = 'scan' } = {}) {
 }
 
 function extractJobsFromDOM(doc) {
-  const scope = doc.querySelector(
+  const scopeMatch = doc.querySelector(
     '#available-orders, .available-orders, [id*="available" i], [class*="available-order" i], [class*="order-list" i], [class*="orders-list" i]'
-  ) || doc;
+  );
+  const scope = scopeMatch || doc;
+  console.log(scopeMatch
+    ? `[AJA] scoped to <${scopeMatch.tagName.toLowerCase()} id="${scopeMatch.id}" class="${scopeMatch.className}">`
+    : '[AJA] no scoped container matched — searching whole document');
 
   const jobs = [];
   const seenIds = new Set();
@@ -105,7 +111,8 @@ function extractJobsFromDOM(doc) {
     return fallbackText.replace(/\s+/g, ' ').substring(0, 140);
   };
 
-  scope.querySelectorAll('[data-id], [data-order-id], [data-key]').forEach((el) => {
+  const s1Candidates = scope.querySelectorAll('[data-id], [data-order-id], [data-key]');
+  s1Candidates.forEach((el) => {
     if (isNoise(el)) return;
     const rawId = el.dataset.id || el.dataset.orderId || el.dataset.key;
     if (!rawId) return;
@@ -118,10 +125,12 @@ function extractJobsFromDOM(doc) {
     const id = extractOrderIdFromUrl(url) || rawId;
     pushJob(id, title, deadline, price, url);
   });
+  console.log(`[AJA] strategy 1 (data-id/data-order-id/data-key): ${s1Candidates.length} candidate(s), ${jobs.length} accepted`);
 
   if (jobs.length > 0) return jobs;
 
-  scope.querySelectorAll('table tbody tr').forEach((row) => {
+  const s2Candidates = scope.querySelectorAll('table tbody tr');
+  s2Candidates.forEach((row) => {
     if (isNoise(row)) return;
     const cells = row.querySelectorAll('td');
     if (cells.length < 2) return;
@@ -133,10 +142,12 @@ function extractJobsFromDOM(doc) {
     const id = extractOrderIdFromUrl(url) || row.id || row.dataset.id || hashString(`${title}|${price}`);
     pushJob(id, title, deadline, price, url);
   });
+  console.log(`[AJA] strategy 2 (table rows): ${s2Candidates.length} candidate(s), ${jobs.length} accepted`);
 
   if (jobs.length > 0) return jobs;
 
-  scope.querySelectorAll('.order, .job, .task, div[class*="order" i], div[class*="job" i]').forEach((card) => {
+  const s3Candidates = scope.querySelectorAll('.order, .job, .task, div[class*="order" i], div[class*="job" i]');
+  s3Candidates.forEach((card) => {
     if (isNoise(card)) return;
     const title = card.querySelector('h3,h4,h5,.title,.topic,.subject')?.textContent?.trim()
       || card.textContent.trim().substring(0, 80);
@@ -145,13 +156,15 @@ function extractJobsFromDOM(doc) {
     const id = extractOrderIdFromUrl(url) || card.id || card.dataset.id || hashString(title);
     pushJob(id, title, '', '', url);
   });
+  console.log(`[AJA] strategy 3 (.order/.job/.task cards): ${s3Candidates.length} candidate(s), ${jobs.length} accepted`);
 
   if (jobs.length > 0) return jobs;
 
   // Last-resort fallback: generic order links inside list rows/cards, for
   // layouts where the site uses plain links instead of explicit
   // order/job classes or data attributes.
-  scope.querySelectorAll('a[href], button[data-href]').forEach((link) => {
+  const s4Candidates = scope.querySelectorAll('a[href], button[data-href]');
+  s4Candidates.forEach((link) => {
     const href = link.getAttribute('href') || link.getAttribute('data-href') || '';
     if (!looksLikeOrderLink(href)) return;
     const container = link.closest('li, tr, td, article, section, div, span');
@@ -161,6 +174,12 @@ function extractJobsFromDOM(doc) {
     const id = extractOrderIdFromUrl(url) || link.id || link.dataset.id || hashString(`${title}|${url}`);
     pushJob(id, title, '', '', url);
   });
+  console.log(`[AJA] strategy 4 (generic order/job links): ${s4Candidates.length} total link(s) scanned, ${jobs.length} accepted`);
+
+  if (jobs.length === 0) {
+    console.warn('[AJA] no strategy matched anything — dumping first 500 chars of scope HTML for inspection:');
+    console.warn(scope.innerHTML ? scope.innerHTML.substring(0, 500) : '(scope has no innerHTML — was the whole document)');
+  }
 
   return jobs;
 }
