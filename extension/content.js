@@ -83,12 +83,20 @@ const isBadgeLikeScope = (el) => {
 };
 
 function extractJobsFromDOM(doc) {
-  let scopeMatch = doc.querySelector(
-    '#available-orders, .available-orders, [id*="available" i], [class*="available-order" i], [class*="order-list" i], [class*="orders-list" i]'
-  );
-  if (isBadgeLikeScope(scopeMatch)) {
-    console.log(`[AJA] rejected scope <${scopeMatch.tagName.toLowerCase()} id="${scopeMatch.id}" class="${scopeMatch.className}"> — looks like a count/badge, not a list`);
-    scopeMatch = null;
+  // #orderList is the real, confirmed container (a Yii pjax fragment —
+  // data-pjax-container — that gets refreshed in place when the order
+  // list changes) — trust it unconditionally, even if it looks sparse
+  // in an empty-orders state. The looser selectors below are unverified
+  // fallbacks and still need the badge/counter heuristic applied.
+  let scopeMatch = doc.querySelector('#orderList, [data-pjax-container]');
+  if (!scopeMatch) {
+    scopeMatch = doc.querySelector(
+      '#available-orders, .available-orders, [id*="available" i], [class*="available-order" i], [class*="order-list" i], [class*="orders-list" i]'
+    );
+    if (isBadgeLikeScope(scopeMatch)) {
+      console.log(`[AJA] rejected scope <${scopeMatch.tagName.toLowerCase()} id="${scopeMatch.id}" class="${scopeMatch.className}"> — looks like a count/badge, not a list`);
+      scopeMatch = null;
+    }
   }
   const scope = scopeMatch || doc;
   console.log(scopeMatch
@@ -105,8 +113,12 @@ function extractJobsFromDOM(doc) {
     jobs.push({ id: String(id), title: title.trim(), deadline: (deadline || '').trim(), price: (price || '').trim(), url });
   };
 
+  // [role="alert"] / .b-order-danger etc. are static warning banners (e.g.
+  // "you have a suspended order") — their class happens to contain "order"
+  // too, so without this they'd be picked up as fake jobs by the
+  // class*="order" card strategy the moment the page has one showing.
   const isNoise = (el) => !!el.closest(
-    'nav, header, footer, .navbar, .menu, .sidebar, [class*="footer" i], [class*="header" i], .pagination, .dropdown, .modal'
+    'nav, header, footer, .navbar, .menu, .sidebar, [class*="footer" i], [class*="header" i], .pagination, .dropdown, .modal, [role="alert"], [class*="disclaimer" i], [class*="danger" i], [class*="warning" i]'
   );
 
   // Requires an actual order id in the URL (not just the word "order"
