@@ -121,9 +121,20 @@ function extractJobsFromHTML(html) {
 
   // Prefer a scoped container when one exists so we don't pick up
   // unrelated data-id/data-key/li elements from nav bars, ads, etc.
-  const scopeMatch = doc.querySelector(
+  //
+  // A real orders-list container has many descendants (rows, buttons,
+  // text). Selectors like [id*="available" i] also match small count/badge
+  // elements (e.g. <span id="available-order-new" class="b-count">0</span>
+  // — a nav badge showing the order count), which would wrongly confine
+  // every extraction strategy to that badge's near-empty subtree. Reject
+  // anything that looks like a badge/counter rather than an actual list.
+  let scopeMatch = doc.querySelector(
     '#available-orders, .available-orders, [id*="available" i], [class*="available-order" i], [class*="order-list" i], [class*="orders-list" i]'
   );
+  if (scopeMatch && (/\b(count|badge)\b/i.test(scopeMatch.className || '') || scopeMatch.querySelectorAll('*').length < 5)) {
+    console.log(`[AJA] rejected scope <${scopeMatch.tagName.toLowerCase()} id="${scopeMatch.id}" class="${scopeMatch.className}"> — looks like a count/badge, not a list`);
+    scopeMatch = null;
+  }
   const scope = scopeMatch || doc;
   console.log(scopeMatch
     ? `[AJA] scoped to <${scopeMatch.tagName.toLowerCase()} id="${scopeMatch.id}" class="${scopeMatch.className}">`
