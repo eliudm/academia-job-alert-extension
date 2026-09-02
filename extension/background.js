@@ -39,6 +39,17 @@ chrome.runtime.onInstalled.addListener(async () => {
   await startPollingIfEnabled();
 });
 
+// ── Heartbeat: Chrome can discard the service worker and/or kill the
+// offscreen document (e.g. after the screen locks/sleeps or just to
+// reclaim memory) without telling us. This alarm is the only thing that
+// wakes the service worker back up afterwards to check the offscreen
+// document is still alive and re-arm polling if it isn't — without it,
+// monitoring silently stops until the popup is reopened.
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== HEARTBEAT_ALARM) return;
+  await startPollingIfEnabled();
+});
+
 // ── Ensure offscreen document exists ────────────────────────
 async function ensureOffscreen() {
   const existing = await chrome.runtime.getContexts({
@@ -54,17 +65,29 @@ async function ensureOffscreen() {
 
 async function startPollingIfEnabled() {
   const { enabled, intervalSeconds } = await chrome.storage.local.get(['enabled', 'intervalSeconds']);
-  if (!enabled) return;
+  if (!enabled) {
+    chrome.alarms.clear(HEARTBEAT_ALARM);
+    return;
+  }
+  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1 });
   await ensureOffscreen();
   chrome.runtime.sendMessage({ type: 'START_POLLING', intervalSeconds: intervalSeconds || 10 }).catch(() => {});
 }
 
 async function stopPolling() {
+  chrome.alarms.clear(HEARTBEAT_ALARM);
   chrome.runtime.sendMessage({ type: 'STOP_POLLING' }).catch(() => {});
 }
 
-// ── Process a batch of parsed jobs from offscreen.js ────────
+// ── Process a batch of parsed jobs from offscreen.js or content.js ──
 async function processJobsResult(jobs) {
+  // content.js scans on every page load/focus/mutation independent of the
+  // enabled toggle (it has no way to know the setting without asking), so
+  // this is the one choke point both sources go through — gate here or
+  // "off" doesn't actually stop alerts, just the background poll.
+  const { enabled } = await chrome.storage.local.get('enabled');
+  if (!enabled) return;
+
   await chrome.storage.local.set({ lastCheck: new Date().toISOString() });
 
   if (jobs.length === 0) {
@@ -89,7 +112,15 @@ async function processJobsResult(jobs) {
   const knownSet = new Set(knownJobIds || []);
   const newJobs = jobs.filter(job => !knownSet.has(job.id));
 
-  await chrome.storage.local.set({ knownJobIds: jobs.map(j => j.id) });
+  // Accumulate — never replace. A job drops off the visible list the moment
+  // it's claimed, so overwriting knownJobIds with just the current poll's
+  // snapshot forgot every claimed job immediately, and any later poll where
+  // it briefly reappeared (pjax refresh lag, list reordering, etc.) treated
+  // it as a brand-new posting and re-fired the alert. Cap the size so it
+  // doesn't grow forever.
+  for (const job of jobs) knownSet.add(job.id);
+  const trimmedKnownIds = Array.from(knownSet).slice(-1000);
+  await chrome.storage.local.set({ knownJobIds: trimmedKnownIds });
 
   if (newJobs.length > 0) {
     await triggerAlerts(newJobs);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Academia Job Alert",
-  "version": "1.3",
+  "version": "1.6",
   "description": "Instant alerts for new Academia.edu job postings — be first to claim within 60 seconds",
   "permissions": [
     "tabs",
